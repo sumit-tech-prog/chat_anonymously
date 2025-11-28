@@ -32,7 +32,7 @@ send_button.grid(row=1, column=1, padx=10, pady=10)
 
 # --- Networking and Encryption ---
 is_server = messagebox.askyesno("Role", "Are you the server (receiver)?")
-server_ip = "192.168.1.100"  # Change this to the server's IP
+server_ip = "192.168.1.100"  # Replace with the server's actual IP
 port = 9999
 
 # Generate RSA keys if they don't exist
@@ -72,17 +72,21 @@ while not other_public_key:
             )
     except FileNotFoundError:
         messagebox.showwarning("Warning", "Copy the other user's public_key.pem to this folder and rename it to other_public_key.pem")
-        input("Press Enter after copying the file...")
+        if not messagebox.askyesno("Retry", "Do you want to retry?"):
+            exit()
 
 # Generate AES key
 aes_key = os.urandom(32)
 
 # --- Socket Setup ---
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+conn = None
 
-if is_server:
+def start_server():
+    global conn
     sock.bind((server_ip, port))
     sock.listen(1)
+    chat_display.insert(tk.END, f"Server is listening on {server_ip}:{port}\n")
     conn, addr = sock.accept()
     chat_display.insert(tk.END, f"Connected to {addr}\n")
     # Send encrypted AES key
@@ -95,10 +99,13 @@ if is_server:
         )
     )
     conn.send(encrypted_aes_key)
-else:
+
+def connect_to_server():
+    global conn
     sock.connect((server_ip, port))
     # Receive encrypted AES key
     encrypted_aes_key = sock.recv(1024)
+    global aes_key
     aes_key = private_key.decrypt(
         encrypted_aes_key,
         padding.OAEP(
@@ -107,6 +114,8 @@ else:
             label=None
         )
     )
+    conn = sock
+    chat_display.insert(tk.END, f"Connected to server\n")
 
 # --- Messaging ---
 def send_encrypted_message(msg):
@@ -114,13 +123,13 @@ def send_encrypted_message(msg):
     cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(msg.encode()) + encryptor.finalize()
-    sock.send(iv + ciphertext)
+    conn.send(iv + ciphertext)
     chat_display.insert(tk.END, f"You: {msg}\n")
 
 def receive_messages():
     while True:
         try:
-            encrypted_msg = sock.recv(1024)
+            encrypted_msg = conn.recv(1024)
             iv = encrypted_msg[:16]
             ciphertext = encrypted_msg[16:]
             cipher = Cipher(algorithms.AES(aes_key), modes.CFB(iv), backend=default_backend())
@@ -130,5 +139,17 @@ def receive_messages():
         except:
             break
 
+# --- Start Server or Connect to Server ---
+if is_server:
+    threading.Thread(target=start_server, daemon=True).start()
+else:
+    threading.Thread(target=connect_to_server, daemon=True).start()
+
+# Wait for connection to be established
+while conn is None:
+    root.update()
+
+# Start receiving messages
 threading.Thread(target=receive_messages, daemon=True).start()
+
 root.mainloop()
