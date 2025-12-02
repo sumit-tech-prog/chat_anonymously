@@ -12,6 +12,7 @@ import subprocess
 import time
 import platform
 import traceback
+import requests
 
 # ---------- Helper functions for length-prefixed messaging ----------
 def send_data(sock: socket.socket, data: bytes):
@@ -36,7 +37,8 @@ def recv_data(sock: socket.socket) -> bytes:
 def check_cloudflared():
     """Check if cloudflared is installed and available"""
     try:
-        subprocess.run(["cloudflared", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["cloudflared", "--version"], check=True,
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True
     except:
         return False
@@ -79,7 +81,7 @@ def start_cloudflared(port):
         if not check_cloudflared():
             print("Cloudflared not found. Downloading...")
             if not download_cloudflared():
-                return None
+                return None, None
 
         # Determine the cloudflared binary name based on OS
         binary = "cloudflared.exe" if platform.system() == "Windows" else "./cloudflared"
@@ -94,12 +96,16 @@ def start_cloudflared(port):
 
         # Wait for the URL to appear in stdout
         url = None
-        for _ in range(20):  # Try for 20 seconds
+        for _ in range(30):  # Try for 30 seconds
             line = process.stdout.readline()
             if "trycloudflare.com" in line:
-                url = line.split("trycloudflare.com")[1].split()[0].strip()
-                url = f"https://{url}.trycloudflare.com"
-                break
+                parts = line.split()
+                for part in parts:
+                    if "trycloudflare.com" in part:
+                        url = f"https://{part.strip()}"
+                        break
+                if url:
+                    break
             time.sleep(1)
 
         return url, process
@@ -112,20 +118,9 @@ class SecureChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Secure Chat (AES-GCM + RSA + Cloudflare Tunnel)")
-        self.sock = None
-        self.conn = None
-        self.cloudflared_process = None
-        self.is_server = messagebox.askyesno("Role", "Are you the server?")
-        self.server_ip = None
-        self.server_port = 9999
-        self.cloudflared_url = None
+        self.root.geometry("600x500")
 
-        if self.is_server:
-            self.setup_server()
-        else:
-            self.setup_client()
-
-        # GUI Setup
+        # Initialize GUI elements first
         self.chat_display = scrolledtext.ScrolledText(root, width=60, height=20, state=tk.DISABLED)
         self.chat_display.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
 
@@ -136,12 +131,27 @@ class SecureChatApp:
         self.send_button = tk.Button(root, text="Send", command=self.send_message)
         self.send_button.grid(row=1, column=1, padx=10, pady=10)
 
+        # Network variables
+        self.sock = None
+        self.conn = None
+        self.cloudflared_process = None
+        self.is_server = messagebox.askyesno("Role", "Are you the server?")
+        self.server_ip = None
+        self.server_port = 9999
+        self.cloudflared_url = None
+
         # Cryptographic keys
         self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.public_key = self.private_key.public_key()
         self.other_public_key = None
         self.aes_key = None
         self.aesgcm = None
+
+        # Setup based on role
+        if self.is_server:
+            self.setup_server()
+        else:
+            self.setup_client()
 
     def setup_server(self):
         """Setup server and start cloudflared tunnel"""
@@ -208,7 +218,7 @@ class SecureChatApp:
             return "127.0.0.1"
 
     def append_chat(self, text):
-        self.root.after(0, lambda: self._append_chat(text))
+        self.root.after(0, self._append_chat, text)
 
     def _append_chat(self, text):
         self.chat_display.configure(state=tk.NORMAL)
@@ -231,7 +241,7 @@ class SecureChatApp:
             self.establish_aes_key_server()
             threading.Thread(target=self.receive_messages, daemon=True).start()
         except Exception as e:
-            self.append_chat(f"Server error: {e}\n{traceback.format_exc()}\n")
+            self.append_chat(f"Server error: {str(e)}\n")
 
     def exchange_public_keys_server(self):
         """Exchange public keys with client (server side)"""
@@ -248,7 +258,7 @@ class SecureChatApp:
             self.other_public_key = serialization.load_pem_public_key(other_pem)
             self.append_chat("Public keys exchanged successfully.\n")
         except Exception as e:
-            self.append_chat(f"Key exchange error: {e}\n")
+            self.append_chat(f"Key exchange error: {str(e)}\n")
 
     def establish_aes_key_server(self):
         """Establish AES key with client (server side)"""
@@ -266,7 +276,7 @@ class SecureChatApp:
             self.aesgcm = AESGCM(self.aes_key)
             self.append_chat("AES key securely sent to client.\n")
         except Exception as e:
-            self.append_chat(f"AES key establishment error: {e}\n")
+            self.append_chat(f"AES key establishment error: {str(e)}\n")
 
     # Client methods
     def connect_to_server(self):
@@ -281,7 +291,7 @@ class SecureChatApp:
             self.establish_aes_key_client()
             threading.Thread(target=self.receive_messages, daemon=True).start()
         except Exception as e:
-            self.append_chat(f"Client error: {e}\n{traceback.format_exc()}\n")
+            self.append_chat(f"Client error: {str(e)}\n")
 
     def exchange_public_keys_client(self):
         """Exchange public keys with server (client side)"""
@@ -298,7 +308,7 @@ class SecureChatApp:
             send_data(self.conn, pub_pem)
             self.append_chat("Public keys exchanged successfully.\n")
         except Exception as e:
-            self.append_chat(f"Key exchange error: {e}\n")
+            self.append_chat(f"Key exchange error: {str(e)}\n")
 
     def establish_aes_key_client(self):
         """Establish AES key with server (client side)"""
@@ -315,7 +325,7 @@ class SecureChatApp:
             self.aesgcm = AESGCM(self.aes_key)
             self.append_chat("AES key received from server.\n")
         except Exception as e:
-            self.append_chat(f"AES key establishment error: {e}\n")
+            self.append_chat(f"AES key establishment error: {str(e)}\n")
 
     # Messaging
     def send_message(self):
@@ -330,7 +340,7 @@ class SecureChatApp:
             self.append_chat(f"You: {msg}\n")
             self.message_entry.delete(0, tk.END)
         except Exception as e:
-            self.append_chat(f"Send error: {e}\n")
+            self.append_chat(f"Send error: {str(e)}\n")
 
     def receive_messages(self):
         try:
@@ -340,15 +350,15 @@ class SecureChatApp:
                 pt = self.aesgcm.decrypt(nonce, ct, None)
                 self.append_chat(f"Other: {pt.decode('utf-8')}\n")
         except Exception as e:
-            self.append_chat(f"Connection error: {e}\n")
+            self.append_chat(f"Connection error: {str(e)}\n")
 
     def cleanup(self):
         """Clean up resources when closing"""
-        if self.sock:
+        if hasattr(self, 'sock') and self.sock:
             self.sock.close()
-        if self.conn:
+        if hasattr(self, 'conn') and self.conn:
             self.conn.close()
-        if self.cloudflared_process:
+        if hasattr(self, 'cloudflared_process') and self.cloudflared_process:
             self.cloudflared_process.terminate()
         self.root.quit()
 
