@@ -47,7 +47,7 @@ def download_cloudflared():
     """Download cloudflared based on the OS"""
     try:
         os_type = platform.system().lower()
-        arch = "amd64"  # Default, adjust if needed
+        arch = "amd64"
 
         if os_type == "windows":
             url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-{arch}.exe"
@@ -83,10 +83,8 @@ def start_cloudflared(port):
             if not download_cloudflared():
                 return None, None
 
-        # Determine the cloudflared binary name based on OS
         binary = "cloudflared.exe" if platform.system() == "Windows" else "./cloudflared"
 
-        # Start cloudflared process
         process = subprocess.Popen(
             [binary, "tunnel", "--url", f"tcp://localhost:{port}"],
             stdout=subprocess.PIPE,
@@ -94,7 +92,6 @@ def start_cloudflared(port):
             text=True
         )
 
-        # Wait for the URL to appear in stdout
         url = None
         for _ in range(30):  # Try for 30 seconds
             line = process.stdout.readline()
@@ -119,8 +116,9 @@ class SecureChatApp:
         self.root = root
         self.root.title("Secure Chat (AES-GCM + RSA + Cloudflare Tunnel)")
         self.root.geometry("600x500")
+        self.root.protocol("WM_DELETE_WINDOW", self.cleanup)
 
-        # Initialize GUI elements first
+        # Initialize GUI elements
         self.chat_display = scrolledtext.ScrolledText(root, width=60, height=20, state=tk.DISABLED)
         self.chat_display.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
 
@@ -218,13 +216,14 @@ class SecureChatApp:
             return "127.0.0.1"
 
     def append_chat(self, text):
-        self.root.after(0, self._append_chat, text)
+        """Thread-safe method to append text to chat display"""
+        def _append():
+            self.chat_display.configure(state=tk.NORMAL)
+            self.chat_display.insert(tk.END, text)
+            self.chat_display.configure(state=tk.DISABLED)
+            self.chat_display.see(tk.END)
 
-    def _append_chat(self, text):
-        self.chat_display.configure(state=tk.NORMAL)
-        self.chat_display.insert(tk.END, text)
-        self.chat_display.configure(state=tk.DISABLED)
-        self.chat_display.see(tk.END)
+        self.root.after(0, _append)
 
     # Server methods
     def start_server(self):
@@ -330,7 +329,7 @@ class SecureChatApp:
     # Messaging
     def send_message(self):
         msg = self.message_entry.get().strip()
-        if not msg or not self.conn or not self.aesgcm:
+        if not msg or not hasattr(self, 'conn') or not self.conn or not self.aesgcm:
             return
 
         try:
@@ -373,5 +372,4 @@ if __name__ == "__main__":
 
     root = tk.Tk()
     app = SecureChatApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.cleanup)
     root.mainloop()
