@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-Secure Chat (AES-GCM + RSA) with optional auto-ngrok TCP tunnel.
-- Server will bind to 0.0.0.0:9999
-- If ngrok is installed and authtoken configured, the app will start `ngrok tcp 9999`
-  and display the public tcp host:port in the GUI.
-- Client should connect to that host:port.
-"""
-
 import socket
 import threading
 import struct
@@ -290,3 +281,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = SecureChatApp(root)
     root.mainloop()
+
